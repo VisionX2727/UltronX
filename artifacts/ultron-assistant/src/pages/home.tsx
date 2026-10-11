@@ -10,7 +10,7 @@ type Mode = 'IDLE' | 'LISTENING' | 'PROCESSING' | 'SPEAKING' | 'PAUSED' | 'SHUTD
 type Turn = { role: 'user' | 'assistant'; content: string; created_at?: string };
 type SpeechRecognitionResult = { 0: { transcript: string }; isFinal: boolean };
 type SpeechRecognitionEvent = { results: ArrayLike<SpeechRecognitionResult>; resultIndex?: number };
-type SpeechRecognitionInstance = { continuous: boolean; interimResults: boolean; lang: string; onresult: ((event: SpeechRecognitionEvent) => void) | null; onerror: ((event: { error?: string }) => void) | null; onend: (() => void) | null; start: () => void; stop: () => void };
+type SpeechRecognitionInstance = { continuous: boolean; interimResults: boolean; lang: string; onstart: (() => void) | null; onresult: ((event: SpeechRecognitionEvent) => void) | null; onerror: ((event: { error?: string }) => void) | null; onend: (() => void) | null; start: () => void; stop: () => void };
 type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognitionInstance; webkitSpeechRecognition?: new () => SpeechRecognitionInstance };
 
 function escapePattern(value: string) {
@@ -164,6 +164,10 @@ export default function Home() {
     recognition.lang = navigator.language || 'en-IN';
     recognition.interimResults = true;
     recognition.continuous = true;
+    recognition.onstart = () => {
+      setMicError('');
+      setHeardText(`Speech recognizer active (${recognition.lang}). Say “${settings.wakePhrase || 'Hey ULTRON'}”.`);
+    };
     recognition.onresult = (event) => {
       const first = event.resultIndex ?? Math.max(0, event.results.length - 1);
       for (let index = first; index < event.results.length; index += 1) {
@@ -213,18 +217,23 @@ export default function Home() {
       }
     };
     recognition.onerror = (event) => {
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed' || event.error === 'audio-capture' || event.error === 'language-not-supported') {
         stopMic();
         setMode('ERROR');
-        setMicError('Your browser blocked speech recognition. Allow microphone and speech permissions for this site, then try again.');
+        const hint = event.error === 'audio-capture'
+          ? 'Close other apps using the microphone and allow microphone access in Chrome.'
+          : event.error === 'language-not-supported'
+            ? `The browser does not support ${recognition.lang}. Change the phone’s speech language or try English (India).`
+            : 'Allow microphone and speech recognition for this site in Chrome settings, then try again.';
+        setMicError(`Speech recognition failed (${event.error}). ${hint}`);
       } else if (event.error === 'network') {
         stopMic();
         setMode('ERROR');
         setMicError('The browser speech service is offline or unreachable. Check your connection, then tap Start listening again.');
       } else if (event.error === 'no-speech') {
-        setNotice(`No speech detected. Say “${settings.wakePhrase || 'Hey ULTRON'}” near the microphone.`);
-      } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
-        setNotice(`Speech recognition error${event.error ? ` (${event.error})` : ''}. Check your connection and browser permissions.`);
+        setHeardText(`No speech reached the recognizer. Say “${settings.wakePhrase || 'Hey ULTRON'}” clearly near the phone.`);
+      } else if (event.error !== 'aborted') {
+        setMicError(`Speech recognition error${event.error ? ` (${event.error})` : ''}. Check Chrome’s microphone permission and speech service.`);
       }
     };
     recognition.onend = () => {
@@ -276,8 +285,13 @@ export default function Home() {
       setHeardText('');
       startRecognition();
       const hasSpeechRecognition = Boolean((window as SpeechWindow).SpeechRecognition ?? (window as SpeechWindow).webkitSpeechRecognition);
-      if (!hasSpeechRecognition) setNotice('This browser cannot recognize speech. Try Chrome on Android or type your message.');
-      else setNotice(`Listening for “${settings.wakePhrase || 'Hey ULTRON'}”. Keep this page open.`);
+      if (!hasSpeechRecognition) {
+        stopMic();
+        setMode('ERROR');
+        setMicError('This browser cannot recognize speech. Use a current version of Chrome on Android, or type your message.');
+        return;
+      }
+      setNotice(`Listening for “${settings.wakePhrase || 'Hey ULTRON'}”. Keep this page open.`);
       setMode('LISTENING');
     } catch {
       setMode('ERROR');
