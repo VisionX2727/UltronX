@@ -1,0 +1,11 @@
+{
+  "buildCommand": "pnpm --filter @workspace/ultron-assistant run build",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "outputDirectory": "artifacts/ultron-assistant/dist/public",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

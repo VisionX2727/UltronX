@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: assistant
+    description: Authenticated ULTRON assistant interactions
 paths:
   /healthz:
     get:
@@ -24,7 +26,53 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /assistant/chat:
+    post:
+      operationId: sendAssistantMessage
+      tags: [assistant]
+      summary: Send a message to ULTRON
+      description: Generates a concise assistant reply for the authenticated user.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssistantMessageInput"
+      responses:
+        "200":
+          description: Assistant reply
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistantMessage"
+        "400":
+          description: Invalid request
+        "401":
+          description: A valid Supabase session is required
+        "429":
+          description: Too many requests
+        "503":
+          description: Assistant is not configured
+  /assistant/status:
+    get:
+      operationId: assistantStatus
+      tags: [assistant]
+      summary: Check assistant configuration without exposing credentials
+      responses:
+        "200":
+          description: Server-side provider readiness
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistantServiceStatus"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +81,64 @@ components:
           type: string
       required:
         - status
+    AssistantTurn:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      required: [role, content]
+    AssistantMessageInput:
+      type: object
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        history:
+          type: array
+          maxItems: 12
+          items:
+            $ref: "#/components/schemas/AssistantTurn"
+        assistantName:
+          type: string
+          minLength: 1
+          maxLength: 40
+        personality:
+          type: string
+          enum: [calm, witty, precise]
+        personalityIntensity:
+          type: integer
+          minimum: 0
+          maximum: 100
+        humourLevel:
+          type: integer
+          minimum: 0
+          maximum: 100
+      required: [message, history, assistantName, personality, personalityIntensity, humourLevel]
+    AssistantMessage:
+      type: object
+      properties:
+        message:
+          type: string
+          minLength: 1
+      required: [message]
+    AssistantServiceStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ready, needs_setup]
+        provider:
+          type: string
+          enum: [google_gemini]
+        geminiConfigured:
+          type: boolean
+        supabaseConfigured:
+          type: boolean
+      required: [status, provider, geminiConfigured, supabaseConfigured]
 
