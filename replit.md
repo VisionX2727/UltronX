@@ -42,6 +42,7 @@ A mobile-first, browser-based AI voice assistant with a reactive 3D core, Supaba
 ## Product
 
 - Users can chat by typing or browser speech recognition, hear replies through an available device voice, save conversations/settings to Supabase, and inspect the real mic waveform on the 3D core.
+- After the user starts the mic, the wake phrase should be acknowledged aloud; ULTRON should accept the request, speak its answer, then resume listening until the user stops it.
 - Native wake-word monitoring and phone control are not implemented in the web app.
 
 ## User preferences

@@ -13,6 +13,53 @@ type SpeechRecognitionEvent = { results: ArrayLike<SpeechRecognitionResult>; res
 type SpeechRecognitionInstance = { continuous: boolean; interimResults: boolean; lang: string; onresult: ((event: SpeechRecognitionEvent) => void) | null; onerror: ((event: { error?: string }) => void) | null; onend: (() => void) | null; start: () => void; stop: () => void };
 type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognitionInstance; webkitSpeechRecognition?: new () => SpeechRecognitionInstance };
 
+function escapePattern(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function matchWakePrefix(transcript: string, wakePhrase: string) {
+  const configuredPhrase = wakePhrase.trim() || 'Hey ULTRON';
+  const aliases = configuredPhrase.toLowerCase().replace(/\s+/g, ' ') === 'hey ultron'
+    ? [configuredPhrase, 'Hey Ultra', 'Hey Electron', 'हे अल्ट्रॉन', 'हे अल्ट्रोन']
+    : [configuredPhrase];
+
+  for (const alias of aliases) {
+    const pattern = alias.trim().split(/\s+/).map(escapePattern).join('[\\s,!.?\\-]*');
+    const match = new RegExp(`^\\s*${pattern}(?:[\\s,!.?\\-]+|$)`, 'iu').exec(transcript);
+    if (match) return { request: transcript.slice(match[0].length).trim() };
+  }
+  return null;
+}
+
+function speakText(
+  text: string,
+  voice: SpeechSynthesisVoice | null,
+  rate: number,
+  pitch: number,
+  onComplete: () => void,
+) {
+  if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
+    onComplete();
+    return false;
+  }
+  const utterance = new SpeechSynthesisUtterance(text);
+  if (voice) utterance.voice = voice;
+  utterance.lang = voice?.lang || navigator.language || 'en-IN';
+  utterance.rate = rate;
+  utterance.pitch = pitch;
+  let completed = false;
+  const finish = () => {
+    if (completed) return;
+    completed = true;
+    onComplete();
+  };
+  utterance.onend = finish;
+  utterance.onerror = finish;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
+
 const stateCopy: Record<Mode, string> = {
   IDLE: 'ULTRON ONLINE', LISTENING: 'LISTENING...', PROCESSING: 'ANALYZING REQUEST...', SPEAKING: 'RESPONDING...',
   PAUSED: 'VOICE MONITORING PAUSED', SHUTDOWN: 'ULTRON OFFLINE', ERROR: 'MICROPHONE UNAVAILABLE',
@@ -33,6 +80,7 @@ export default function Home() {
   const [waveform, setWaveform] = useState<number[]>(Array(32).fill(0));
   const [micError, setMicError] = useState('');
   const [notice, setNotice] = useState('');
+  const [heardText, setHeardText] = useState('');
   const [voiceDraft, setVoiceDraft] = useState('');
   const [screenShared, setScreenShared] = useState(false);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -43,6 +91,7 @@ export default function Home() {
   const voiceListeningRef = useRef(false);
   const recognitionHeldRef = useRef(true);
   const wakePhraseHeardRef = useRef(false);
+  const wakeBufferRef = useRef('');
   const recognitionRestartRef = useRef<number | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const modeRef = useRef(mode);
@@ -67,8 +116,11 @@ export default function Home() {
       const list = window.speechSynthesis?.getVoices() ?? [];
       setVoices(list);
       const stored = list.find((v) => v.name === settings.preferredVoice);
-      const british = list.find((v) => /^en-GB/i.test(v.lang) && !/\bfemale\b/i.test(v.name) && /male|daniel|george|oliver|arthur|ryan/i.test(v.name)) ?? list.find((v) => /^en-GB/i.test(v.lang) && !/\bfemale\b/i.test(v.name));
-      setSelectedVoice(stored ?? british ?? null);
+      const locale = (navigator.language || 'en-IN').toLowerCase();
+      const localVoice = list.find((v) => v.lang.toLowerCase() === locale)
+        ?? list.find((v) => v.lang.toLowerCase().startsWith(locale.split('-')[0]));
+      const fallback = list.find((v) => v.default) ?? list.find((v) => /^en-/i.test(v.lang)) ?? list[0];
+      setSelectedVoice(stored ?? localVoice ?? fallback ?? null);
     };
     update();
     window.speechSynthesis?.addEventListener('voiceschanged', update);
@@ -109,7 +161,7 @@ export default function Home() {
     const Rec = (window as SpeechWindow).SpeechRecognition ?? (window as SpeechWindow).webkitSpeechRecognition;
     if (!Rec) return;
     const recognition = new Rec();
-    recognition.lang = 'en-GB';
+    recognition.lang = navigator.language || 'en-IN';
     recognition.interimResults = true;
     recognition.continuous = true;
     recognition.onresult = (event) => {
@@ -118,29 +170,45 @@ export default function Home() {
         const result = event.results[index];
         const transcript = result?.[0]?.transcript?.trim();
         if (!transcript) continue;
-        setText(transcript);
+        setHeardText(transcript);
         if (!result.isFinal) continue;
 
         let request = transcript;
         if (!wakePhraseHeardRef.current) {
-          const phraseParts = (settings.wakePhrase || 'Hey ULTRON').trim().split(/\s+/).filter(Boolean);
-          const phrasePattern = phraseParts.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s,!.?\\-]*');
-          const wakeMatch = request.match(new RegExp(`^\\s*${phrasePattern}[\\s,!.?\\-]*`, 'i'));
+          wakeBufferRef.current = `${wakeBufferRef.current} ${transcript}`.trim().split(/\s+/).slice(-16).join(' ');
+          const wakeMatch = matchWakePrefix(wakeBufferRef.current, settings.wakePhrase || 'Hey ULTRON');
           if (!wakeMatch) {
-            setNotice(`Listening for “${settings.wakePhrase || 'Hey ULTRON'}”.`);
+            setHeardText(wakeBufferRef.current);
             continue;
           }
           wakePhraseHeardRef.current = true;
-          request = request.slice(wakeMatch[0].length).trim();
+          wakeBufferRef.current = '';
+          request = wakeMatch.request;
+          if (!request) {
+            recognitionHeldRef.current = true;
+            recognition.stop();
+            if (recognitionRef.current === recognition) recognitionRef.current = null;
+            setNotice(`${settings.assistantName} is awake. Speak your request now.`);
+            setHeardText('Wake phrase detected');
+            speakText("I'm listening. What do you need?", selectedVoice, settings.speechRate, settings.speechPitch, () => {
+              if (voiceListeningRef.current && modeRef.current !== 'SHUTDOWN') {
+                recognitionHeldRef.current = false;
+                startRecognition();
+                setMode('LISTENING');
+              } else setMode('IDLE');
+            });
+            break;
+          }
         }
 
         if (request) {
           recognitionHeldRef.current = true;
           recognition.stop();
+          if (recognitionRef.current === recognition) recognitionRef.current = null;
+          setHeardText(`Sending: ${request}`);
           setVoiceDraft(request);
         } else {
-          setText('');
-          setNotice(`${settings.assistantName} is awake. Go ahead.`);
+          setHeardText('');
         }
       }
     };
@@ -149,6 +217,12 @@ export default function Home() {
         stopMic();
         setMode('ERROR');
         setMicError('Your browser blocked speech recognition. Allow microphone and speech permissions for this site, then try again.');
+      } else if (event.error === 'network') {
+        stopMic();
+        setMode('ERROR');
+        setMicError('The browser speech service is offline or unreachable. Check your connection, then tap Start listening again.');
+      } else if (event.error === 'no-speech') {
+        setNotice(`No speech detected. Say “${settings.wakePhrase || 'Hey ULTRON'}” near the microphone.`);
       } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
         setNotice(`Speech recognition error${event.error ? ` (${event.error})` : ''}. Check your connection and browser permissions.`);
       }
@@ -198,9 +272,11 @@ export default function Home() {
       voiceListeningRef.current = true;
       recognitionHeldRef.current = false;
       wakePhraseHeardRef.current = false;
+      wakeBufferRef.current = '';
+      setHeardText('');
       startRecognition();
       const hasSpeechRecognition = Boolean((window as SpeechWindow).SpeechRecognition ?? (window as SpeechWindow).webkitSpeechRecognition);
-      if (!hasSpeechRecognition) setNotice('This browser cannot listen for a wake phrase. You can still type your message.');
+      if (!hasSpeechRecognition) setNotice('This browser cannot recognize speech. Try Chrome on Android or type your message.');
       else setNotice(`Listening for “${settings.wakePhrase || 'Hey ULTRON'}”. Keep this page open.`);
       setMode('LISTENING');
     } catch {
@@ -264,24 +340,14 @@ export default function Home() {
             void refreshHistory();
           }
           if (modeRef.current === 'SHUTDOWN') return;
-          if (selectedVoice && 'speechSynthesis' in window) {
-            const utterance = new SpeechSynthesisUtterance(answer);
-            utterance.voice = selectedVoice;
-            utterance.rate = settings.speechRate;
-            utterance.pitch = settings.speechPitch;
-            utterance.onend = () => {
-              if (voiceListeningRef.current && modeRef.current !== 'SHUTDOWN') {
-                recognitionHeldRef.current = false;
-                startRecognition();
-                setMode('LISTENING');
-              } else setMode('IDLE');
-            };
-            window.speechSynthesis.speak(utterance);
-          } else if (voiceListeningRef.current) {
-            recognitionHeldRef.current = false;
-            startRecognition();
-            setMode('LISTENING');
-          } else setMode('IDLE');
+          const audioAvailable = speakText(answer, selectedVoice, settings.speechRate, settings.speechPitch, () => {
+            if (voiceListeningRef.current && modeRef.current !== 'SHUTDOWN') {
+              recognitionHeldRef.current = false;
+              startRecognition();
+              setMode('LISTENING');
+            } else setMode('IDLE');
+          });
+          if (!audioAvailable) setNotice('Reply is ready in the conversation, but this browser cannot play spoken audio.');
         },
         onError: () => {
           setMode(voiceListeningRef.current ? 'LISTENING' : 'ERROR');
@@ -380,6 +446,8 @@ export default function Home() {
 
   const backendUp = health.data?.status === 'ok' || health.data?.status === 'healthy';
   const status = mode === 'PROCESSING' && api.isPending ? 'PROCESSING' : mode;
+  const speechOutputAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
+  const listeningCaption = wakePhraseHeardRef.current ? 'VOICE CHANNEL OPEN' : `SAY “${settings.wakePhrase || 'HEY ULTRON'}”`;
 
   return <div className="workspace rise">
     <div className="console-heading">
@@ -400,16 +468,17 @@ export default function Home() {
         <div className="state-readout">
           <span className={`state-led ${status.toLowerCase()}`} />
           <span className="state-name" data-testid="status-assistant">{status}</span>
-          <span className="state-divider">/</span><span className="state-caption">{stateCopy[status]}</span>
+          <span className="state-divider">/</span><span className="state-caption">{status === 'LISTENING' ? listeningCaption : stateCopy[status]}</span>
         </div>
         {status === 'LISTENING' ? <div className="live-waveform" aria-label="Live microphone frequency waveform">{waveform.map((value, i) => <i key={i} style={{ transform: `scaleY(${Math.max(.12, value)})` }} />)}</div> : <p className="sphere-caption">Voice and text, on your terms.</p>}
+        {status === 'LISTENING' && <p className="heard-transcript" aria-live="polite">{heardText ? `Heard: ${heardText}` : 'Waiting for speech…'}</p>}
         {micError && <p role="alert" className="inline-error">{micError}</p>}
         <div className="core-actions">
           {status === 'SHUTDOWN' || status === 'PAUSED' ? <button className="mic-button resume" onClick={() => { setMode('IDLE'); setNotice('ULTRON is ready again. Press Start listening to activate the microphone.'); }}><Radio size={17} /> Resume ULTRON</button> : status === 'LISTENING' ? <button className="mic-button active" onClick={() => { stopMic(); setMode('IDLE'); setNotice('Voice listening stopped.'); }}><CircleStop size={17} /> Stop listening</button> : user ? <button className="mic-button" onClick={() => void startMic()} disabled={status === 'PROCESSING'}><Mic size={17} /> Start listening</button> : <Link href="/auth" className="mic-button"><ShieldAlert size={17} /> Sign in to use voice</Link>}
           {status === 'IDLE' && <button className="pause-button" onClick={pauseAssistant} aria-label="Pause ULTRON"><Pause size={14} /></button>}
           <span className="separator-word">OR TYPE BELOW</span>
         </div>
-        <div className="voice-guidance"><Mic size={13} /><span>Keep this page open and say “{settings.wakePhrase || 'Hey ULTRON'}” followed by your request. ULTRON replies aloud, then listens again.</span></div>
+        <div className="voice-guidance"><Mic size={13} /><span>Keep this page open. Say “{settings.wakePhrase || 'Hey ULTRON'}” and pause for ULTRON’s acknowledgement, or say the wake phrase followed by your request. ULTRON replies aloud and keeps listening.</span></div>
         <div className="screen-controls">
           {!screenShared ? <button className="secondary-action" onClick={() => void beginScreenShare()} disabled={!user}><Monitor size={15} /> Share screen</button> : <>
             <button className="secondary-action" onClick={() => void askAboutScreen()} disabled={!user || api.isPending}><Eye size={15} /> Ask about my screen</button>
@@ -431,7 +500,7 @@ export default function Home() {
           <label className="sr-only" htmlFor="message">Message ULTRON</label><textarea id="message" data-testid="input-message" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={user ? 'Ask ULTRON anything…' : 'Sign in to start a conversation…'} rows={2} maxLength={2000} />
           <div className="composer-bottom"><span><kbd>↵</kbd> send&nbsp; · &nbsp;<kbd>⇧ ↵</kbd> new line</span><button className="send-button" type="submit" aria-label="Send message" disabled={!text.trim() || api.isPending || !user || status === 'SHUTDOWN'} data-testid="button-send">{api.isPending ? <LoaderCircle className="spin" size={17} /> : <ArrowUp size={18} />}</button></div>
         </form>
-        <p className="transcript-foot"><Volume2 size={13} /> {selectedVoice ? `Spoken with ${selectedVoice.name} · ${selectedVoice.lang}` : 'Device voice output unavailable'} <span>{turns.length}/—</span></p>
+        <p className="transcript-foot"><Volume2 size={13} /> {!speechOutputAvailable ? 'Spoken replies unavailable in this browser' : selectedVoice ? `Spoken with ${selectedVoice.name} · ${selectedVoice.lang}` : 'Using browser default voice'} <span>{turns.length}/—</span></p>
       </section>
     </div>
     <div className="under-console">

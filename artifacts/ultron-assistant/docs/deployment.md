@@ -41,6 +41,6 @@ See [the Android companion plan](./android-companion.md) for the proposed trust 
 - Run `pnpm run typecheck` and `pnpm --filter @workspace/ultron-assistant run build`.
 - Apply the migration, then test sign-up, sign-in, sign-out, password reset, and settings/history persistence with two accounts to confirm RLS isolation.
 - Test typed chat with a valid Gemini key and expired/invalid sessions; confirm missing configuration produces an explicit error rather than a fabricated response.
-- On a supported browser, test microphone permission grant/denial, live frequency movement, speech recognition availability, speech output, and emergency stop. Confirm the mic stops when navigating away or shutting down.
+- On a supported browser, test microphone permission grant/denial, wake phrase alone and with a request, visible speech transcript, spoken acknowledgement and answer, listening resumption, and emergency stop. Confirm the mic stops when navigating away or shutting down.
 - Deploy the API separately, set `VITE_API_BASE_URL` to its `/api` endpoint, and verify the Vercel frontend can reach it over HTTPS.
 - Test the native Android checklist separately before claiming background wake or phone controls.
