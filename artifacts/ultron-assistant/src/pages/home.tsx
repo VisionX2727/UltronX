@@ -90,6 +90,7 @@ export default function Home() {
   const displayStreamRef = useRef<MediaStream | null>(null);
   const voiceListeningRef = useRef(false);
   const recognitionHeldRef = useRef(true);
+  const recognitionStartedRef = useRef(false);
   const wakePhraseHeardRef = useRef(false);
   const wakeBufferRef = useRef('');
   const recognitionRestartRef = useRef<number | null>(null);
@@ -134,6 +135,7 @@ export default function Home() {
   const stopMic = useCallback(() => {
     voiceListeningRef.current = false;
     recognitionHeldRef.current = true;
+    recognitionStartedRef.current = false;
     if (recognitionRestartRef.current !== null) window.clearTimeout(recognitionRestartRef.current);
     recognitionRestartRef.current = null;
     const current = audioRef.current;
@@ -165,8 +167,10 @@ export default function Home() {
     recognition.interimResults = true;
     recognition.continuous = true;
     recognition.onstart = () => {
-      setMicError('');
-      setHeardText(`Speech recognizer active (${recognition.lang}). Say “${settings.wakePhrase || 'Hey ULTRON'}”.`);
+      if (!recognitionStartedRef.current) {
+        recognitionStartedRef.current = true;
+        setHeardText(`Speech recognizer active (${recognition.lang}). Say “${settings.wakePhrase || 'Hey ULTRON'}”.`);
+      }
     };
     recognition.onresult = (event) => {
       const first = event.resultIndex ?? Math.max(0, event.results.length - 1);
@@ -280,6 +284,7 @@ export default function Home() {
       audioRef.current = { stream, context, frame: requestAnimationFrame(monitor) };
       voiceListeningRef.current = true;
       recognitionHeldRef.current = false;
+      recognitionStartedRef.current = false;
       wakePhraseHeardRef.current = false;
       wakeBufferRef.current = '';
       setHeardText('');
