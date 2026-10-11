@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "ULTRON — Personal AI Assistant"
+description = "A mobile-first, voice-enabled AI assistant with an interactive 3D core, speech controls, configurable personality, and clear separation between browser features and future Android integrations."
+version = "1.0.0"
+id = "artifacts/ultron-assistant"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23678
+
+[services.development]
+run = "pnpm --filter @workspace/ultron-assistant run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/ultron-assistant", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/ultron-assistant/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23678"
+BASE_PATH = "/"
