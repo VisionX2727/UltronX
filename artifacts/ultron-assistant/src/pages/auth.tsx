@@ -11,6 +11,7 @@ export default function Auth() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
+  const [googlePending, setGooglePending] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
 
@@ -36,6 +37,20 @@ export default function Auth() {
     finally { setPending(false); }
   };
   const title = mode === 'signin' ? 'Welcome back.' : mode === 'signup' ? 'Create your account.' : 'Reset your password.';
+  const signInWithGoogle = async () => {
+    if (!supabase) return;
+    setGooglePending(true); setError(''); setNotice('');
+    try {
+      const { error: authError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: window.location.origin },
+      });
+      if (authError) throw authError;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Google sign-in could not be started.');
+      setGooglePending(false);
+    }
+  };
 
   return <div className="auth-page rise">
     <div className="auth-return"><Link href="/" className="back-link"><ChevronLeft size={15} /> Back to console</Link></div>
@@ -58,6 +73,7 @@ export default function Auth() {
             {!supabaseConfigured ? <div className="auth-config" role="status"><ShieldAlert size={19} /><div><b>Supabase configuration needed</b><p>Authentication is not available yet. Add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> to the app environment to connect sign-in, sign-up, and password reset. No account session is being simulated.</p></div></div> :
               <>
                 <p className="auth-intro">{mode === 'reset' ? 'We’ll send a password reset link if the email is registered.' : mode === 'signup' ? 'Your account is created through the connected Supabase project.' : 'Use the credentials for your Supabase account.'}</p>
+                {mode === 'signin' && <><button className="google-button" type="button" onClick={() => void signInWithGoogle()} disabled={googlePending || pending}>{googlePending ? <LoaderCircle size={16} className="spin" /> : <span className="google-g" aria-hidden="true">G</span>} Continue with Google</button><div className="auth-divider"><span>OR CONTINUE WITH EMAIL</span></div></>}
                 <form className="auth-form" onSubmit={(event) => void submit(event)}>
                   <label className="field-label">Email address<span className="input-icon"><Mail size={15} /><input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" data-testid="input-auth-email" /></span></label>
                   {mode !== 'reset' && <label className="field-label">Password<span className="input-icon"><LockKeyhole size={15} /><input type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} minLength={6} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" data-testid="input-auth-password" /></span></label>}

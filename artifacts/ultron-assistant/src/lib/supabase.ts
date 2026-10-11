@@ -24,7 +24,7 @@ export const defaultSettings: AssistantSettings = {
   personalityIntensity: 65,
   humourLevel: 24,
   personalityMode: 'calm',
-  wakePhrase: 'Hello ULTRON',
+  wakePhrase: 'Hey ULTRON',
 };
 
 export async function loadSettings(userId: string) {

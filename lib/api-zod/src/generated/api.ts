@@ -35,6 +35,10 @@ export const sendAssistantMessageBodyPersonalityIntensityMax = 100;
 export const sendAssistantMessageBodyHumourLevelMin = 0;
 export const sendAssistantMessageBodyHumourLevelMax = 100;
 
+export const sendAssistantMessageBodyScreenImageMax = 1500000;
+
+
+export const sendAssistantMessageBodyScreenImageRegExp = new RegExp('^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$');
 
 
 export const SendAssistantMessageBody = zod.object({
@@ -46,7 +50,8 @@ export const SendAssistantMessageBody = zod.object({
   "assistantName": zod.string().min(1).max(sendAssistantMessageBodyAssistantNameMax),
   "personality": zod.enum(['calm', 'witty', 'precise']),
   "personalityIntensity": zod.number().int().min(sendAssistantMessageBodyPersonalityIntensityMin).max(sendAssistantMessageBodyPersonalityIntensityMax),
-  "humourLevel": zod.number().int().min(sendAssistantMessageBodyHumourLevelMin).max(sendAssistantMessageBodyHumourLevelMax)
+  "humourLevel": zod.number().int().min(sendAssistantMessageBodyHumourLevelMin).max(sendAssistantMessageBodyHumourLevelMax),
+  "screenImage": zod.string().max(sendAssistantMessageBodyScreenImageMax).regex(sendAssistantMessageBodyScreenImageRegExp).optional().describe('A single user-requested JPEG screenshot for visual analysis.')
 })
 
 

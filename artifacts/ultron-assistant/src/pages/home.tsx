@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'wouter';
 import { getHealthCheckQueryKey, useHealthCheck, useSendAssistantMessage } from '@workspace/api-client-react';
-import { ArrowUp, AudioLines, ChevronDown, CircleStop, Clock3, LoaderCircle, Mic, Pause, Plus, Radio, ShieldAlert, Volume2, X } from 'lucide-react';
+import { ArrowUp, AudioLines, ChevronDown, CircleStop, Clock3, Eye, LoaderCircle, Mic, Monitor, Pause, Plus, Radio, ShieldAlert, Volume2, X } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { defaultSettings, supabase, type AssistantSettings } from '@/lib/supabase';
 
@@ -9,7 +9,7 @@ const Sphere = lazy(() => import('@/components/Sphere'));
 type Mode = 'IDLE' | 'LISTENING' | 'PROCESSING' | 'SPEAKING' | 'PAUSED' | 'SHUTDOWN' | 'ERROR';
 type Turn = { role: 'user' | 'assistant'; content: string; created_at?: string };
 type SpeechRecognitionResult = { 0: { transcript: string }; isFinal: boolean };
-type SpeechRecognitionEvent = { results: ArrayLike<SpeechRecognitionResult> };
+type SpeechRecognitionEvent = { results: ArrayLike<SpeechRecognitionResult>; resultIndex?: number };
 type SpeechRecognitionInstance = { continuous: boolean; interimResults: boolean; lang: string; onresult: ((event: SpeechRecognitionEvent) => void) | null; onerror: (() => void) | null; onend: (() => void) | null; start: () => void; stop: () => void };
 type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognitionInstance; webkitSpeechRecognition?: new () => SpeechRecognitionInstance };
 
@@ -33,10 +33,17 @@ export default function Home() {
   const [waveform, setWaveform] = useState<number[]>(Array(32).fill(0));
   const [micError, setMicError] = useState('');
   const [notice, setNotice] = useState('');
+  const [voiceDraft, setVoiceDraft] = useState('');
+  const [screenShared, setScreenShared] = useState(false);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
   const audioRef = useRef<{ stream: MediaStream; context: AudioContext; frame: number } | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const displayStreamRef = useRef<MediaStream | null>(null);
+  const voiceListeningRef = useRef(false);
+  const recognitionHeldRef = useRef(true);
+  const wakePhraseHeardRef = useRef(false);
+  const recognitionRestartRef = useRef<number | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -73,6 +80,10 @@ export default function Home() {
   }, [turns, api.isPending]);
 
   const stopMic = useCallback(() => {
+    voiceListeningRef.current = false;
+    recognitionHeldRef.current = true;
+    if (recognitionRestartRef.current !== null) window.clearTimeout(recognitionRestartRef.current);
+    recognitionRestartRef.current = null;
     const current = audioRef.current;
     if (current) {
       cancelAnimationFrame(current.frame);
@@ -85,7 +96,72 @@ export default function Home() {
     setMicLevel(0);
   }, []);
 
-  useEffect(() => () => stopMic(), [stopMic]);
+  const stopScreenShare = useCallback(() => {
+    displayStreamRef.current?.getTracks().forEach((track) => track.stop());
+    displayStreamRef.current = null;
+    setScreenShared(false);
+  }, []);
+
+  useEffect(() => () => { stopMic(); stopScreenShare(); }, [stopMic, stopScreenShare]);
+
+  const startRecognition = () => {
+    if (!voiceListeningRef.current || recognitionHeldRef.current || recognitionRef.current) return;
+    const Rec = (window as SpeechWindow).SpeechRecognition ?? (window as SpeechWindow).webkitSpeechRecognition;
+    if (!Rec) return;
+    const recognition = new Rec();
+    recognition.lang = 'en-GB';
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognition.onresult = (event) => {
+      const first = event.resultIndex ?? Math.max(0, event.results.length - 1);
+      for (let index = first; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        const transcript = result?.[0]?.transcript?.trim();
+        if (!transcript) continue;
+        setText(transcript);
+        if (!result.isFinal) continue;
+
+        let request = transcript;
+        if (!wakePhraseHeardRef.current) {
+          const phraseParts = (settings.wakePhrase || 'Hey ULTRON').trim().split(/\s+/).filter(Boolean);
+          const phrasePattern = phraseParts.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s,!.?\\-]*');
+          const wakeMatch = request.match(new RegExp(`^\\s*${phrasePattern}[\\s,!.?\\-]*`, 'i'));
+          if (!wakeMatch) {
+            setNotice(`Listening for “${settings.wakePhrase || 'Hey ULTRON'}”.`);
+            continue;
+          }
+          wakePhraseHeardRef.current = true;
+          request = request.slice(wakeMatch[0].length).trim();
+        }
+
+        if (request) {
+          recognitionHeldRef.current = true;
+          recognition.stop();
+          setVoiceDraft(request);
+        } else {
+          setText('');
+          setNotice(`${settings.assistantName} is awake. Go ahead.`);
+        }
+      }
+    };
+    recognition.onerror = () => setNotice('Speech recognition paused. Tap Start listening to try again.');
+    recognition.onend = () => {
+      if (recognitionRef.current === recognition) recognitionRef.current = null;
+      if (voiceListeningRef.current && !recognitionHeldRef.current) {
+        recognitionRestartRef.current = window.setTimeout(() => {
+          recognitionRestartRef.current = null;
+          startRecognition();
+        }, 350);
+      }
+    };
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch {
+      recognitionRef.current = null;
+      setNotice('Could not start speech recognition. You can still type a message.');
+    }
+  };
 
   const startMic = async () => {
     setMicError('');
@@ -111,20 +187,13 @@ export default function Home() {
         if (audioRef.current) audioRef.current.frame = requestAnimationFrame(monitor);
       };
       audioRef.current = { stream, context, frame: requestAnimationFrame(monitor) };
-      const Rec = (window as SpeechWindow).SpeechRecognition ?? (window as SpeechWindow).webkitSpeechRecognition;
-      if (Rec) {
-        const recognition = new Rec();
-        recognition.lang = 'en-GB';
-        recognition.interimResults = true;
-        recognition.continuous = true;
-        recognition.onresult = (event) => {
-          const latest = event.results[event.results.length - 1];
-          if (latest) setText(latest[0].transcript);
-        };
-        recognition.onerror = () => setNotice('Speech-to-text stopped. You can continue by typing.');
-        recognitionRef.current = recognition;
-        recognition.start();
-      } else setNotice('Live level monitoring is on. This browser does not provide speech recognition; type your message below.');
+      voiceListeningRef.current = true;
+      recognitionHeldRef.current = false;
+      wakePhraseHeardRef.current = false;
+      startRecognition();
+      const hasSpeechRecognition = Boolean((window as SpeechWindow).SpeechRecognition ?? (window as SpeechWindow).webkitSpeechRecognition);
+      if (!hasSpeechRecognition) setNotice('This browser cannot listen for a wake phrase. You can still type your message.');
+      else setNotice(`Listening for “${settings.wakePhrase || 'Hey ULTRON'}”. Keep this page open.`);
       setMode('LISTENING');
     } catch {
       setMode('ERROR');
@@ -141,12 +210,16 @@ export default function Home() {
 
   const newConversation = () => { stopMic(); setMode('IDLE'); setTurns([]); setConversationId(null); setText(''); setHistoryOpen(false); };
 
-  const send = async () => {
-    const message = text.trim();
+  const send = async (overrideMessage?: string, screenImage?: string) => {
+    const message = (overrideMessage ?? text).trim();
     if (!message || api.isPending) return;
     if (!user) { setNotice('Sign in to send a message.'); return; }
     if (mode === 'SHUTDOWN') { setNotice('Resume ULTRON before sending.'); return; }
-    stopMic();
+    recognitionHeldRef.current = true;
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    if (recognitionRestartRef.current !== null) window.clearTimeout(recognitionRestartRef.current);
+    recognitionRestartRef.current = null;
     const nextTurns: Turn[] = [...turns, { role: 'user', content: message }];
     setTurns(nextTurns);
     setText('');
@@ -171,6 +244,7 @@ export default function Home() {
         personality: settings.personalityMode,
         personalityIntensity: settings.personalityIntensity,
         humourLevel: settings.humourLevel,
+         ...(screenImage ? { screenImage } : {}),
       } }, {
         onSuccess: async (result) => {
           const answer = result.message;
@@ -187,11 +261,28 @@ export default function Home() {
             utterance.voice = selectedVoice;
             utterance.rate = settings.speechRate;
             utterance.pitch = settings.speechPitch;
-            utterance.onend = () => setMode('IDLE');
+            utterance.onend = () => {
+              if (voiceListeningRef.current && modeRef.current !== 'SHUTDOWN') {
+                recognitionHeldRef.current = false;
+                startRecognition();
+                setMode('LISTENING');
+              } else setMode('IDLE');
+            };
             window.speechSynthesis.speak(utterance);
+          } else if (voiceListeningRef.current) {
+            recognitionHeldRef.current = false;
+            startRecognition();
+            setMode('LISTENING');
           } else setMode('IDLE');
         },
-        onError: () => { setMode('ERROR'); setNotice('The assistant service could not respond. Your message remains in this session.'); },
+        onError: () => {
+          setMode(voiceListeningRef.current ? 'LISTENING' : 'ERROR');
+          setNotice('The assistant service could not respond. Your message remains in this session.');
+          if (voiceListeningRef.current) {
+            recognitionHeldRef.current = false;
+            startRecognition();
+          }
+        },
       });
     } catch (error) {
       setMode('ERROR');
@@ -199,14 +290,81 @@ export default function Home() {
     }
   };
 
+  useEffect(() => {
+    if (!voiceDraft) return;
+    setText(voiceDraft);
+    void send(voiceDraft);
+    setVoiceDraft('');
+  }, [voiceDraft]);
+
+  const beginScreenShare = async () => {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      setNotice('Screen sharing is not available in this browser. Try a current desktop browser.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      displayStreamRef.current = stream;
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        if (displayStreamRef.current === stream) {
+          displayStreamRef.current = null;
+          setScreenShared(false);
+          setNotice('Screen sharing has ended.');
+        }
+      });
+      setScreenShared(true);
+      setNotice('Screen is shared. ULTRON only receives a still image if you choose Ask about my screen.');
+    } catch {
+      setNotice('Screen sharing was cancelled. No screen content was sent.');
+    }
+  };
+
+  const askAboutScreen = async () => {
+    const stream = displayStreamRef.current;
+    if (!stream || !user || api.isPending) return;
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        video.onloadedmetadata = () => resolve();
+        video.onerror = () => reject(new Error('Could not read the shared screen.'));
+        if (video.readyState >= 1) resolve();
+      });
+      await video.play();
+      const scale = Math.min(1, 1280 / video.videoWidth);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Screen capture is unavailable.');
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const prompt = text.trim() || 'Please inspect this screen capture and help me with what is visible. Describe what you can see and ask before taking any action.';
+      let image = canvas.toDataURL('image/jpeg', 0.68);
+      if (image.length > 1_450_000) image = canvas.toDataURL('image/jpeg', 0.45);
+      if (image.length > 1_500_000) throw new Error('This screen capture is too large to send. Share a smaller window or tab instead.');
+      video.pause();
+      video.srcObject = null;
+      setNotice('Sending one screen image for analysis. Screen video is not recorded.');
+      void send(prompt, image);
+    } catch (error) {
+      video.pause();
+      video.srcObject = null;
+      setNotice(error instanceof Error ? error.message : 'Could not capture the shared screen.');
+    }
+  };
+
   const emergencyStop = () => {
     stopMic();
+    stopScreenShare();
     window.speechSynthesis?.cancel();
     setMode('SHUTDOWN');
     setNotice('Audio input and playback have stopped.');
   };
   const pauseAssistant = () => {
     stopMic();
+    stopScreenShare();
     window.speechSynthesis?.cancel();
     setMode('PAUSED');
     setNotice('ULTRON is paused. Resume when you are ready.');
@@ -239,11 +397,19 @@ export default function Home() {
         {status === 'LISTENING' ? <div className="live-waveform" aria-label="Live microphone frequency waveform">{waveform.map((value, i) => <i key={i} style={{ transform: `scaleY(${Math.max(.12, value)})` }} />)}</div> : <p className="sphere-caption">Voice and text, on your terms.</p>}
         {micError && <p role="alert" className="inline-error">{micError}</p>}
         <div className="core-actions">
-          {status === 'SHUTDOWN' || status === 'PAUSED' ? <button className="mic-button resume" onClick={() => { setMode('IDLE'); setNotice('ULTRON is ready again.'); }}><Radio size={17} /> Resume ULTRON</button> : status === 'LISTENING' ? <button className="mic-button active" onClick={() => { stopMic(); setMode('IDLE'); }}><CircleStop size={17} /> Stop listening</button> : <button className="mic-button" onClick={() => void startMic()} disabled={status === 'PROCESSING'}><Mic size={17} /> Start listening</button>}
+        {status === 'SHUTDOWN' || status === 'PAUSED' ? <button className="mic-button resume" onClick={() => { setMode('IDLE'); setNotice('ULTRON is ready again. Press Start listening to activate the microphone.'); }}><Radio size={17} /> Resume ULTRON</button> : status === 'LISTENING' ? <button className="mic-button active" onClick={() => { stopMic(); setMode('IDLE'); setNotice('Voice listening stopped.'); }}><CircleStop size={17} /> Stop listening</button> : <button className="mic-button" onClick={() => void startMic()} disabled={status === 'PROCESSING'}><Mic size={17} /> Start listening</button>}
           {status === 'IDLE' && <button className="pause-button" onClick={pauseAssistant} aria-label="Pause ULTRON"><Pause size={14} /></button>}
           <span className="separator-word">OR TYPE BELOW</span>
         </div>
-        <div className="native-note"><ShieldAlert size={14} /><span>Browser speech recognition may use your browser’s speech service; ULTRON does not store microphone recordings. Screen-off wake and phone controls require the Android app.</span></div>
+        <div className="voice-guidance"><Mic size={13} /><span>Keep this page open and say “{settings.wakePhrase || 'Hey ULTRON'}” followed by your request. ULTRON replies aloud, then listens again.</span></div>
+        <div className="screen-controls">
+          {!screenShared ? <button className="secondary-action" onClick={() => void beginScreenShare()} disabled={!user}><Monitor size={15} /> Share screen</button> : <>
+            <button className="secondary-action" onClick={() => void askAboutScreen()} disabled={!user || api.isPending}><Eye size={15} /> Ask about my screen</button>
+            <button className="stop-button screen-stop" onClick={() => { stopScreenShare(); setNotice('Screen sharing stopped.'); }}><CircleStop size={14} /> Stop sharing</button>
+          </>}
+          {!user && <span className="screen-signin">Sign in to share a screen with ULTRON.</span>}
+        </div>
+        <div className="native-note"><ShieldAlert size={14} /><span>Wake listening works only while this page is open and the browser permits speech recognition. Screen review uses one still image only when you press Ask about my screen; sharing can be stopped anytime.</span></div>
       </section>
 
       <section className="conversation-panel" aria-label="Conversation">
@@ -262,7 +428,7 @@ export default function Home() {
     </div>
     <div className="under-console">
       <div className="under-item"><span className="micro-icon"><Mic size={15} /></span><div><b>Microphone</b><small>{status === 'LISTENING' ? 'Permission active this session' : 'Activates only when requested'}</small></div></div>
-      <div className="under-item"><span className="micro-icon"><Radio size={15} /></span><div><b>Wake phrase</b><small>Screen-off wake is unavailable in browser</small></div></div>
+      <div className="under-item"><span className="micro-icon"><Radio size={15} /></span><div><b>Wake phrase</b><small>{settings.wakePhrase || 'Hey ULTRON'} · while page is open</small></div></div>
       <button type="button" className="stop-button" onClick={emergencyStop} disabled={status === 'SHUTDOWN'}><CircleStop size={15} /> Emergency stop</button>
     </div>
     {!user && <div className="sign-in-callout"><span>Conversation history syncs to your account.</span><Link href="/auth">Sign in <ArrowUp size={14} /></Link></div>}

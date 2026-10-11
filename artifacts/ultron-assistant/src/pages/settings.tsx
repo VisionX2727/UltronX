@@ -18,7 +18,7 @@ export default function Settings() {
 
   useEffect(() => {
     if (user) loadSettings(user.id).then((data) => {
-      if (data) setSettings({ assistantName: data.assistant_name ?? 'ULTRON', preferredVoice: data.preferred_voice ?? '', speechRate: data.speech_rate ?? 1, speechPitch: data.speech_pitch ?? 1, personalityIntensity: data.personality_intensity ?? 65, humourLevel: data.humour_level ?? 24, personalityMode: data.personality_mode ?? 'calm', wakePhrase: data.wake_phrase ?? 'Hello ULTRON' });
+        if (data) setSettings({ assistantName: data.assistant_name ?? 'ULTRON', preferredVoice: data.preferred_voice ?? '', speechRate: data.speech_rate ?? 1, speechPitch: data.speech_pitch ?? 1, personalityIntensity: data.personality_intensity ?? 65, humourLevel: data.humour_level ?? 24, personalityMode: data.personality_mode ?? 'calm', wakePhrase: data.wake_phrase ?? 'Hey ULTRON' });
     }).catch((reason: Error) => setError(reason.message));
   }, [user?.id]);
 
@@ -51,7 +51,11 @@ export default function Settings() {
     setStopped(true);
     setMessage('Speech playback stopped. Browser microphone capture ends when its session is stopped in the console.');
   };
-  const signOut = async () => { if (supabase) await supabase.auth.signOut(); };
+  const signOut = async () => {
+    if (!supabase) return;
+    const { error: signOutError } = await supabase.auth.signOut();
+    if (signOutError) setError(signOutError.message);
+  };
   const chosenVoice = voices.find((voice) => voice.name === settings.preferredVoice);
 
   return <div className="settings-page rise">
@@ -65,7 +69,7 @@ export default function Settings() {
         <section className="setting-section" id="identity"><div className="section-heading"><span className="section-number">01</span><div><h2>Identity & character</h2><p>Set the name and tone that shape each response.</p></div></div>
           <div className="field-grid">
             <label className="field-label">Assistant name<input maxLength={40} value={settings.assistantName} onChange={(e) => update('assistantName', e.target.value)} data-testid="input-assistant-name" /></label>
-            <label className="field-label">Wake phrase <input value={settings.wakePhrase} onChange={(e) => update('wakePhrase', e.target.value)} data-testid="input-wake-phrase" /><small>Reference text only. Wake-word monitoring is unavailable in a browser.</small></label>
+          <label className="field-label">Wake phrase <input value={settings.wakePhrase} onChange={(e) => update('wakePhrase', e.target.value)} data-testid="input-wake-phrase" /><small>Say this phrase while voice listening is active and the ULTRON page is open. Browser speech recognition support varies.</small></label>
           </div>
           <div className="option-label">PERSONALITY MODE</div><div className="choice-row">{(['calm', 'precise', 'witty'] as const).map((mode) => <button className={`choice ${settings.personalityMode === mode ? 'selected' : ''}`} key={mode} onClick={() => update('personalityMode', mode)} aria-pressed={settings.personalityMode === mode} data-testid={`button-personality-${mode}`}><span>{mode}</span><small>{mode === 'calm' ? 'Measured & composed' : mode === 'precise' ? 'Direct & focused' : 'Light, not distracting'}</small></button>)}</div>
           <label className="range-setting"><span><span>Personality intensity</span><b className="mono">{settings.personalityIntensity}</b></span><input type="range" min="0" max="100" value={settings.personalityIntensity} onChange={(e) => update('personalityIntensity', Number(e.target.value))} data-testid="input-personality-intensity" /><small>Sets how strongly the selected mode shapes replies.</small></label>
@@ -80,11 +84,12 @@ export default function Settings() {
         <section className="setting-section" id="access"><div className="section-heading"><span className="section-number">03</span><div><h2>Permissions & integrations</h2><p>What this browser session can—and cannot—access.</p></div></div>
           <div className="integration-row"><div className="integration-icon"><Mic size={16} /></div><div className="integration-text"><b>Microphone</b><small>Granted only after you press “Start listening”.</small></div><span className={`integration-status ${permission === 'Granted' ? 'available' : ''}`}>{permission}</span></div>
           <div className="integration-row"><div className="integration-icon"><Activity size={16} /></div><div className="integration-text"><b>Google Gemini & Supabase</b><small>{serviceStatus.isLoading ? 'Checking server-side configuration.' : serviceStatus.isError ? 'Could not check provider configuration. Verify the API endpoint.' : `${serviceStatus.data?.geminiConfigured ? 'Gemini key configured' : 'GEMINI_API_KEY is missing'} · ${serviceStatus.data?.supabaseConfigured ? 'Supabase configured' : 'Supabase project settings are missing'}.`}</small></div><span className={`integration-status ${serviceStatus.data?.status === 'ready' ? 'available' : ''}`}>{serviceStatus.isLoading ? 'CHECKING' : serviceStatus.isError ? 'UNKNOWN' : serviceStatus.data?.status === 'ready' ? 'READY' : 'NEEDS SETUP'}</span></div>
-          <div className="integration-row unavailable"><div className="integration-icon"><WifiOff size={16} /></div><div className="integration-text"><b>Screen-off wake & Android controls</b><small>Native Android features are not available in this web app.</small></div><span className="integration-status">UNAVAILABLE</span></div>
+          <div className="integration-row"><div className="integration-icon"><WifiOff size={16} /></div><div className="integration-text"><b>Screen-off wake & Android controls</b><small>Not available in the browser. Keep the console open for wake phrase listening.</small></div><span className="integration-status">BROWSER LIMIT</span></div>
+          <div className="integration-row"><div className="integration-icon"><ShieldCheck size={16} /></div><div className="integration-text"><b>Screen review</b><small>Start screen sharing from the console, then explicitly send one still capture for analysis. Stop sharing at any time.</small></div><span className="integration-status available">ON REQUEST</span></div>
           <div className="danger-zone"><div><b>Emergency stop</b><small>Immediately cancel browser speech playback.</small></div><button className="stop-button" onClick={stopAll} disabled={stopped}><CircleStop size={15} /> {stopped ? 'Stopped' : 'Stop audio'}</button></div>
         </section>
         <section className="setting-section account-section" id="account"><div className="section-heading"><span className="section-number">04</span><div><h2>Account</h2><p>{user ? `Signed in as ${user.email ?? 'your Supabase account'}` : 'Authentication is managed by your Supabase project.'}</p></div></div>
-          {user ? <button className="secondary-action" onClick={() => void signOut()}><LogOut size={15} /> Sign out</button> : <Link href="/auth" className="secondary-action"><ShieldCheck size={15} /> Sign in</Link>}
+          {user ? <button className="secondary-action" onClick={() => void signOut()}><LogOut size={15} /> Log out</button> : <Link href="/auth" className="secondary-action"><ShieldCheck size={15} /> Sign in</Link>}
         </section>
         {(message || error) && <p className={error ? 'form-error' : 'form-success'} role="status">{error || message}</p>}
         <div className="save-row"><span>{user ? 'Saved securely through Supabase with row-level security.' : 'Sign in to save these preferences.'}</span><button className="primary-action" onClick={() => void persist()} disabled={saving || !user || !supabaseConfigured} data-testid="button-save-settings">{saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />} Save preferences</button></div>

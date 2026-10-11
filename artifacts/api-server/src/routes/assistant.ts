@@ -67,7 +67,7 @@ router.post("/assistant/chat", chatRateLimit, async (req, res) => {
   }
 
   try {
-    const { message, history, assistantName, personality, personalityIntensity, humourLevel } = parsed.data;
+    const { message, history, assistantName, personality, personalityIntensity, humourLevel, screenImage } = parsed.data;
     const assistant = new GoogleGenAI({
       apiKey: geminiApiKey,
       httpOptions: { timeout: 30_000 },
@@ -86,7 +86,18 @@ router.post("/assistant/chat", chatRateLimit, async (req, res) => {
         role: turn.role === "assistant" ? "model" : "user",
         parts: [{ text: turn.content }],
       })),
-      { role: "user", parts: [{ text: message }] },
+      {
+        role: "user",
+        parts: [
+          { text: message },
+          ...(screenImage ? [{
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: screenImage.slice("data:image/jpeg;base64,".length),
+            },
+          }] : []),
+        ],
+      },
     ];
     const result = await assistant.models.generateContent({
       model: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",

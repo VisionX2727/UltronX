@@ -59,6 +59,12 @@ export interface AssistantMessageInput {
      * @maximum 100
      */
   humourLevel: number;
+  /**
+     * A single user-requested JPEG screenshot for visual analysis.
+     * @maxLength 1500000
+     * @pattern ^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$
+     */
+  screenImage?: string;
 }
 
 export interface AssistantMessage {
