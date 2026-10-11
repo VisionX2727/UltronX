@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link } from 'wouter';
 import { ArrowLeft, ArrowUpRight, Check, ChevronLeft, KeyRound, LoaderCircle, LockKeyhole, Mail, ShieldAlert } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
-import { supabase, supabaseConfigured } from '@/lib/supabase';
+import { supabase, supabaseConfigured, supabaseOAuthCallbackUrl } from '@/lib/supabase';
 
 type AuthMode = 'signin' | 'signup' | 'reset';
 export default function Auth() {
@@ -43,7 +43,7 @@ export default function Auth() {
     try {
       const { error: authError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: window.location.origin },
+        options: { redirectTo: new URL(import.meta.env.BASE_URL, window.location.origin).toString() },
       });
       if (authError) throw authError;
     } catch (reason) {
@@ -73,11 +73,23 @@ export default function Auth() {
             {!supabaseConfigured ? <div className="auth-config" role="status"><ShieldAlert size={19} /><div><b>Supabase configuration needed</b><p>Authentication is not available yet. Add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> to the app environment to connect sign-in, sign-up, and password reset. No account session is being simulated.</p></div></div> :
               <>
                 <p className="auth-intro">{mode === 'reset' ? 'We’ll send a password reset link if the email is registered.' : mode === 'signup' ? 'Your account is created through the connected Supabase project.' : 'Use the credentials for your Supabase account.'}</p>
-                {mode === 'signin' && <><button className="google-button" type="button" onClick={() => void signInWithGoogle()} disabled={googlePending || pending}>{googlePending ? <LoaderCircle size={16} className="spin" /> : <span className="google-g" aria-hidden="true">G</span>} Continue with Google</button><div className="auth-divider"><span>OR CONTINUE WITH EMAIL</span></div></>}
+                {error && <p className="form-error" role="alert">{error}</p>}
+                {mode === 'signin' && <>
+                  <button className="google-button" type="button" onClick={() => void signInWithGoogle()} disabled={googlePending || pending}>{googlePending ? <LoaderCircle size={16} className="spin" /> : <span className="google-g" aria-hidden="true">G</span>} Continue with Google</button>
+                  {supabaseOAuthCallbackUrl && <details className="oauth-help" open>
+                    <summary>Google sign-in blocked? Fix the redirect URL</summary>
+                    <p>In Google Cloud Console, open your web OAuth client. Add the first value under <b>Authorized JavaScript origins</b> and the second under <b>Authorized redirect URIs</b>.</p>
+                    <span className="oauth-value-label">THIS APP’S ORIGIN</span><code>{window.location.origin}</code>
+                    <span className="oauth-value-label">SUPABASE CALLBACK URI</span>
+                    <code>{supabaseOAuthCallbackUrl}</code>
+                    <p>In Supabase, make sure the same Google client ID and secret are saved under Authentication → Providers → Google, and this app’s URL is allowed in the redirect URL settings.</p>
+                  </details>}
+                  <div className="auth-divider"><span>OR CONTINUE WITH EMAIL</span></div>
+                </>}
                 <form className="auth-form" onSubmit={(event) => void submit(event)}>
                   <label className="field-label">Email address<span className="input-icon"><Mail size={15} /><input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" data-testid="input-auth-email" /></span></label>
                   {mode !== 'reset' && <label className="field-label">Password<span className="input-icon"><LockKeyhole size={15} /><input type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} minLength={6} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" data-testid="input-auth-password" /></span></label>}
-                  {error && <p className="form-error" role="alert">{error}</p>}{notice && <p className="form-success" role="status"><Check size={15} />{notice}</p>}
+                  {notice && <p className="form-success" role="status"><Check size={15} />{notice}</p>}
                   <button className="primary-action auth-submit" type="submit" disabled={pending}>{pending ? <LoaderCircle size={16} className="spin" /> : mode === 'reset' ? <Mail size={16} /> : <ArrowUpRight size={16} />}{mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Send reset link'}</button>
                 </form>
                 {mode === 'signin' ? <button className="forgot-link" onClick={() => { setMode('reset'); setError(''); setNotice(''); }}><span>Forgot password?</span><ArrowLeft size={14} /></button> : mode === 'reset' ? <button className="forgot-link" onClick={() => setMode('signin')}><ArrowLeft size={14} /><span>Return to sign in</span></button> : null}

@@ -10,7 +10,7 @@ type Mode = 'IDLE' | 'LISTENING' | 'PROCESSING' | 'SPEAKING' | 'PAUSED' | 'SHUTD
 type Turn = { role: 'user' | 'assistant'; content: string; created_at?: string };
 type SpeechRecognitionResult = { 0: { transcript: string }; isFinal: boolean };
 type SpeechRecognitionEvent = { results: ArrayLike<SpeechRecognitionResult>; resultIndex?: number };
-type SpeechRecognitionInstance = { continuous: boolean; interimResults: boolean; lang: string; onresult: ((event: SpeechRecognitionEvent) => void) | null; onerror: (() => void) | null; onend: (() => void) | null; start: () => void; stop: () => void };
+type SpeechRecognitionInstance = { continuous: boolean; interimResults: boolean; lang: string; onresult: ((event: SpeechRecognitionEvent) => void) | null; onerror: ((event: { error?: string }) => void) | null; onend: (() => void) | null; start: () => void; stop: () => void };
 type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognitionInstance; webkitSpeechRecognition?: new () => SpeechRecognitionInstance };
 
 const stateCopy: Record<Mode, string> = {
@@ -144,7 +144,15 @@ export default function Home() {
         }
       }
     };
-    recognition.onerror = () => setNotice('Speech recognition paused. Tap Start listening to try again.');
+    recognition.onerror = (event) => {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        stopMic();
+        setMode('ERROR');
+        setMicError('Your browser blocked speech recognition. Allow microphone and speech permissions for this site, then try again.');
+      } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
+        setNotice(`Speech recognition error${event.error ? ` (${event.error})` : ''}. Check your connection and browser permissions.`);
+      }
+    };
     recognition.onend = () => {
       if (recognitionRef.current === recognition) recognitionRef.current = null;
       if (voiceListeningRef.current && !recognitionHeldRef.current) {
@@ -213,7 +221,7 @@ export default function Home() {
   const send = async (overrideMessage?: string, screenImage?: string) => {
     const message = (overrideMessage ?? text).trim();
     if (!message || api.isPending) return;
-    if (!user) { setNotice('Sign in to send a message.'); return; }
+    if (!user) { setNotice('Sign in first. ULTRON needs an account session before it can answer voice or text requests.'); return; }
     if (mode === 'SHUTDOWN') { setNotice('Resume ULTRON before sending.'); return; }
     recognitionHeldRef.current = true;
     recognitionRef.current?.stop();
@@ -397,7 +405,7 @@ export default function Home() {
         {status === 'LISTENING' ? <div className="live-waveform" aria-label="Live microphone frequency waveform">{waveform.map((value, i) => <i key={i} style={{ transform: `scaleY(${Math.max(.12, value)})` }} />)}</div> : <p className="sphere-caption">Voice and text, on your terms.</p>}
         {micError && <p role="alert" className="inline-error">{micError}</p>}
         <div className="core-actions">
-        {status === 'SHUTDOWN' || status === 'PAUSED' ? <button className="mic-button resume" onClick={() => { setMode('IDLE'); setNotice('ULTRON is ready again. Press Start listening to activate the microphone.'); }}><Radio size={17} /> Resume ULTRON</button> : status === 'LISTENING' ? <button className="mic-button active" onClick={() => { stopMic(); setMode('IDLE'); setNotice('Voice listening stopped.'); }}><CircleStop size={17} /> Stop listening</button> : <button className="mic-button" onClick={() => void startMic()} disabled={status === 'PROCESSING'}><Mic size={17} /> Start listening</button>}
+          {status === 'SHUTDOWN' || status === 'PAUSED' ? <button className="mic-button resume" onClick={() => { setMode('IDLE'); setNotice('ULTRON is ready again. Press Start listening to activate the microphone.'); }}><Radio size={17} /> Resume ULTRON</button> : status === 'LISTENING' ? <button className="mic-button active" onClick={() => { stopMic(); setMode('IDLE'); setNotice('Voice listening stopped.'); }}><CircleStop size={17} /> Stop listening</button> : user ? <button className="mic-button" onClick={() => void startMic()} disabled={status === 'PROCESSING'}><Mic size={17} /> Start listening</button> : <Link href="/auth" className="mic-button"><ShieldAlert size={17} /> Sign in to use voice</Link>}
           {status === 'IDLE' && <button className="pause-button" onClick={pauseAssistant} aria-label="Pause ULTRON"><Pause size={14} /></button>}
           <span className="separator-word">OR TYPE BELOW</span>
         </div>
@@ -431,6 +439,6 @@ export default function Home() {
       <div className="under-item"><span className="micro-icon"><Radio size={15} /></span><div><b>Wake phrase</b><small>{settings.wakePhrase || 'Hey ULTRON'} · while page is open</small></div></div>
       <button type="button" className="stop-button" onClick={emergencyStop} disabled={status === 'SHUTDOWN'}><CircleStop size={15} /> Emergency stop</button>
     </div>
-    {!user && <div className="sign-in-callout"><span>Conversation history syncs to your account.</span><Link href="/auth">Sign in <ArrowUp size={14} /></Link></div>}
+    {!user && <div className="sign-in-callout"><span>Sign in to send voice or text requests and save conversation history.</span><Link href="/auth">Sign in <ArrowUp size={14} /></Link></div>}
   </div>;
 }
